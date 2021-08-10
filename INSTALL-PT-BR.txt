@@ -1,0 +1,328 @@
+Para o helios voting:
+
+Primeira Instalação, passo a passo:
+sudo apt-get update
+sudo apt-get install openssh-server git vim
+Ver se precisa esse:
+sudo apt-get install build-essential
+
+sudo apt-get install python3 python3-venv python3-pip celery rabbitmq-server
+sudo pip3 install psycopg2-binary
+sudo pip3 install psycopg2
+
+sudo apt-get install postgresql postgresql-contrib libpq-dev
+sudo pg_ctlcluster 13 main start
+sudo systemctl enable postgresql 
+sudo systemctl start postgresql
+
+sudo apt-get install apache2 libapache2-mod-uwsgi libapache2-mod-wsgi-py3 supervisor
+
+#Para o VotaEquiplano
+sudo apt-get install php php-dom
+sudo apt-get install php-curl curl
+sudo phpenmod dom
+sudo phpenmod curl
+
+cd /var/www
+sudo git clone https://github.com/benadida/helios-server.git voting
+sudo git clone https://github.com/ifsc/helios-server.git votacao
+sudo chown helios:www-data -R voting
+cd /var/www/voting
+python3 -m venv $(pwd)/venv
+source ./venv/bin/activate
+(venv)pip install -r requirements.txt
+
+Conforme o "Benadida" do requirements.txt:
+<code>
+Django==2.2.19
+django_webtest>=1.9.7
+gunicorn==20.0.4
+dj_database_url==0.5.0
+psycopg2==2.8.4
+celery==4.2.1
+django-picklefield==1.1.0
+python-dateutil>=2.8
+unicodecsv==0.14.1
+bleach==3.3.0
+validate_email==1.3
+pycryptodome==3.8.2
+python3-openid==3.0.10
+boto==2.49.0
+django-ses==0.8.14
+oauth2client==4.1.3
+rollbar==0.14.7
+</code>
+
+Configurando o Postgresql:
+sudo su postgres
+(postgres)psql
+(postgres)create database helios;
+(postgres)create user helios with password 'HeliosVoteNaCaixa';
+(postgres)alter user helios with createdb;
+(postgres)\q
+(venv)exit
+
+#sudo -u postgres psql -c 'alter user helios with createdb' postgres
+#$ sudo -u postgres createuser helios
+#$ sudo -u postgres createdb helios
+
+.env
+
+vim settings.py (Quando usa do IFSC, tem outros modulos que tem que verificar, que são especificos deles. Ver para desabilitar)
+
+DATABASES = {
+	'default': {
+		'ENGINE': 'django.db.backends.postgresql_psycopg2',
+		'NAME': 'helios',
+		'HOST': 'localhost',
+		'USER': 'helios',
+		'PASSWORD': 'HeliosVoteNaCaixa',
+		'CONN_MAX_AGE': 600
+	}
+}
+TIME_ZONE='America/Sao_Paulo'
+LANGUAGE_CODE = 'pt-BR' //Ver como proceder aqui, antes de alterar
+
+AUTH_ENABLED_SYSTEMS = ['password']
+Ver também:
+AUTH_ENABLED_AUTH_SYSTEMS = get_from_env('AUTH_ENABLED_AUTH_SYSTEMS', 'ldap').split(",")
+ALLOWED_HOSTS = get_from_env('ALLOWED_HOSTS', 'localhost,voting.too,172.16.10.146').split(",")
+URL_HOST = 'http://voting.too/committee' #get_from_env("URL_HOST", "http://localhost:8000").rstrip("/")
+
+Via arquivo ".env":
+SECRET_KEY=LML&F%4HwLTF6E3CDJllpP5Ln5*@d37I#W$8%V&R!hThB2$
+ALLOWED_HOSTS=localhost,voting.too,172.16.10.146
+URL_HOST=http://voting.too/committee
+AUTH_ENABLED_AUTH_SYSTEMS=password,google
+AUTH_DEFAULT_SYSTEM=password
+
+
+
+Editar o arquivo pg_hba.conf e inserir a linha:
+local   all              helios                         md5
+sudo systemctl restart postgresql
+
+
+vim reset.sh //Para não ter problema de conexão e o banco de dados estiver vazio/zerado.
+#dropdb
+#createdb
+
+./reset.sh
+
+#echo "from helios_auth.models import User; User.objects.create(user_type='password',user_id='admin@admin.com', info={'name':'Administrador','password':'AdminCoop'})" | python manage.py shell
+
+echo "from helios_auth.models import User; User.objects.create(user_type='password',user_id='admin@admin.com',name='Administrador do Sistema',info={'name':'Administrador do Sistema','password':'admin001','email':'votacao@teste.com.br'},admin_p=True)" | python manage.py shell > /dev/null
+
+
+Configuração do Apache:
+sudo a2enmod rewrite
+sudo a2enmod ssl
+sudo systemctl restart apache2
+
+
+
+
+Arquivo de configuração para o site (votacao.conf):
+sudo vim /etc/apache/sites-available/votacao.conf
+<code>
+#voting=sitestatic
+Alias /robots.txt /var/www/voting/sitestatic/robots.txt
+Alias /favicon.ico /var/www/voting/sitestatic/favicon.ico
+
+AliasMatch ^/([^/]*\.css) /var/www/voting/static/styles/$1
+
+Alias /media /var/www/voting/sitestatic
+Alias /static /var/www/voting/sitestatic
+Alias /booth /var/www/voting/sitestatic/booth
+Alias /verifier /var/www/voting/sitestatic/verifier
+
+WSGIProcessGroup votacao.too
+WSGIApplicationGroup %{GLOBAL}
+WSGIDaemonProcess votacao.too display-name=%{GROUP} python-home=/venv python-path=/var/www/voting:/venv/lib/python3.9:/venv/lib/python3.9/site-packages
+WSGIScriptAlias / /var/www/voting/wsgi.py
+
+<VirtualHost *:80>
+    #UseCanonicalName On
+
+    #SSLEngine               on
+    #SSLCertificateFile      /etc/ssl/certs/dev-helios-apache.crt
+    #SSLCertificateKeyFile   /etc/ssl/private/dev-helios-apache.key
+
+    #ProxyRequests Off
+    #ProxyPreserveHost Off
+    #ProxyPass / http://localhost:8000/
+    #ProxyPassReverse / http://localhost:8000/
+    DocumentRoot /var/www/voting
+    <Directory /var/www/voting>
+            Options All
+            AllowOverride All
+            Require all granted
+    </Directory>
+
+    <Directory /var/www/voting/static>
+            Options All
+            AllowOverride All
+            Require all granted
+    </Directory>
+
+    <Directory /var/www/voting/media>
+            Options All
+            AllowOverride All
+            Require all granted
+    </Directory>
+
+    <Directory /var/www/voting>
+            Options All
+            AllowOverride All
+            Require all granted
+           <Files wsgi.py>
+                    Order deny,allow
+                    Allow from all
+                    Require all granted
+            </Files>
+    </Directory>
+
+    ErrorLog /var/log/apache2/error-voting.log
+    # Possible values include: debug, info, notice, warn, error, crit,
+    # alert, emerg.
+    LogLevel info
+    CustomLog /var/log/apache2/access-voting.log combined
+</VirtualHost>
+</code>
+
+config com /committee 
+<code> 
+<VirtualHost *:80>
+	Alias /robots.txt /var/www/voting/server_ui/robots.txt
+	Alias /favicon.ico /var/www/voting/server_ui/favicon.ico
+
+    Alias /media /var/www/voting/server_ui/media
+    Alias /static/helios /var/www/voting/helios/media
+    Alias /static /var/www/voting/server_ui/media
+
+    ServerAdmin admin@admin.com
+    ServerName voting.too
+	DocumentRoot /var/www/voting
+
+    <Directory /var/www/voting>
+      Require all granted
+    </Directory>
+
+    <Directory /var/www/voting>
+        <Files wsgi.py>
+            Require all granted
+        </Files>
+    </Directory>
+
+    WSGIDaemonProcess voting python-home=/var/www/voting/venv python-path=/var/www/voting processes=10 threads=50
+    WSGIProcessGroup voting
+    WSGIScriptAlias /committee /var/www/voting/wsgi.py process-group=voting
+</VirtualHost>
+</code>
+
+config com /committee e votaEquiplano
+<code> 
+<VirtualHost *:80>
+	Alias /robots.txt /var/www/voting/server_ui/robots.txt
+	Alias /favicon.ico /var/www/voting/server_ui/favicon.ico
+
+    Alias /media /var/www/voting/server_ui/media
+    Alias /static/helios /var/www/voting/helios/media
+    Alias /static /var/www/voting/server_ui/media
+
+    ServerAdmin admin@admin.com
+    ServerName voting.too
+	DocumentRoot /var/www/evoting/public
+
+	<Directory /var/www/evoting/public>
+		# Para funfar o python corretamente
+		Require expr %{HTTP_HOST} == "voting.too"
+		Options Indexes FollowSymLinks MultiViews
+		AllowOverride All
+		Require all granted
+	</Directory>
+	
+    #<Directory /var/www/voting/public>
+    #  Require all granted
+    #</Directory>
+
+    #<Directory /var/www/voting>
+    #    <Files wsgi.py>
+    #        Require all granted
+    #    </Files>
+    #</Directory>
+	
+    ErrorLog /var/log/apache2/error-voting.log
+    LogLevel warn
+    CustomLog /var/log/apache2/access-voting.log combined	
+
+    WSGIDaemonProcess voting python-home=/var/www/voting/venv python-path=/var/www/voting processes=10 threads=50
+    WSGIProcessGroup voting
+    WSGIScriptAlias /committee /var/www/voting/wsgi.py process-group=voting
+</VirtualHost>
+</code>
+
+sudo a2ensite votacao
+sudo a2dissite 000-default
+sudo a2ensite 000-default
+sudo systemctl restart apache2
+
+tem um tal de collectstatic sabe os deuses aonde!!
+
+https://dev.to/ninahwang/deploying-a-django-application-using-apache2-94g
+
+Manter o Celery em execução, usando quando envia arquivo de eleitores e durante a votação!!
+source ./venv/bin/activate
+celery -A helios worker -l info
+
+
+Creie um arquivo votacao.conf em /etc/supervisor/conf.d/votacao.conf contendo o seguinte conteúdo
+[program:votacao_celery_worker]
+command=/home/helios/votacao/venv/bin/python manage.py celeryd
+directory=/home/helios/votacao/
+user=helios
+autostart=true
+autorestart=true
+stdout_logfile=/var/log/votacao/celeryd.log
+redirect_stderr=true
+Crie o diretório /var/log/votacao
+$ sudo mkdir /var/log/votacao
+Reinicie o supervisor
+sudo systemctl enable supervisor
+$ sudo service supervisor restart
+
+
+pip uninstall django-celery
+pip uninstall celery && pip install celery
+
+celery> 5.0
+
+///Comissao
+<VirtualHost *:80>
+  #Alias /robots.txt /var/www/voting/server_ui/robots.txt
+  #Alias /favicon.ico /var/www/voting/server_ui/favicon.ico
+
+  #Alias /media /var/www/voting/server_ui/media
+  #Alias /static/helios /var/www/voting/helios/media
+  #Alias /static /var/www/voting/server_ui/media
+
+  ServerAdmin admin@admin.com
+  ServerName comissao.too
+
+  DocumentRoot /var/www/voting
+
+  <Directory /var/www/voting>
+    # Para funfar o python corretamente
+    Require expr %{HTTP_HOST} == "comissao.too"
+    Options Indexes FollowSymLinks MultiViews
+    AllowOverride All
+    Require all granted
+  </Directory>
+  ErrorLog /var/log/apache2/error-comissao.log
+  LogLevel warn
+  CustomLog /var/log/apache2/access-comissao.log combined
+
+  WSGIDaemonProcess comissao python-home=/var/www/voting/venv python-path=/var/www/voting:/venv/lib/python3:/venv/lib/python3/site-packages processes=10 threads=50
+  WSGIProcessGroup comissao
+  WSGIScriptAlias / /var/www/voting/wsgi.py process-group=comissao
+</VirtualHost>
