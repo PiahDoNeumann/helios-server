@@ -7,8 +7,6 @@ Ver se precisa esse:
 sudo apt-get install build-essential
 
 sudo apt-get install python3 python3-venv python3-pip celery rabbitmq-server
-sudo pip3 install psycopg2-binary
-sudo pip3 install psycopg2
 
 sudo apt-get install postgresql postgresql-contrib libpq-dev
 sudo pg_ctlcluster 13 main start
@@ -17,7 +15,10 @@ sudo systemctl start postgresql
 
 sudo apt-get install apache2 libapache2-mod-uwsgi libapache2-mod-wsgi-py3 supervisor
 
-#Para o VotaEquiplano
+sudo pip3 install psycopg2-binary
+sudo pip3 install psycopg2
+
+#Para o VotaCity
 sudo apt-get install php php-dom
 sudo apt-get install php-curl curl
 sudo phpenmod dom
@@ -25,6 +26,7 @@ sudo phpenmod curl
 
 cd /var/www
 sudo git clone https://github.com/benadida/helios-server.git voting
+//Esse daqui por enquanto só para consulta!!
 sudo git clone https://github.com/ifsc/helios-server.git votacao
 sudo chown helios:www-data -R voting
 cd /var/www/voting
@@ -123,7 +125,39 @@ sudo systemctl restart apache2
 
 
 Arquivo de configuração para o site (votacao.conf):
-sudo vim /etc/apache/sites-available/votacao.conf
+sudo vim /etc/apache2/sites-available/votacao.conf
+
+<VirtualHost *:80>
+  #Alias /robots.txt /var/www/voting/server_ui/robots.txt
+  #Alias /favicon.ico /var/www/voting/server_ui/favicon.ico
+
+  #Alias /media /var/www/voting/server_ui/media
+  #Alias /static/helios /var/www/voting/helios/media
+  #Alias /static /var/www/voting/server_ui/media
+
+  ServerAdmin admin@admin.com
+  ServerName comissao.too
+
+  DocumentRoot /var/www/voting
+
+  <Directory /var/www/voting>
+    # Para funfar o python corretamente
+    Require expr %{HTTP_HOST} == "comissao.too"
+    Options Indexes FollowSymLinks MultiViews
+    AllowOverride All
+    Require all granted
+  </Directory>
+  ErrorLog /var/log/apache2/error-comissao.log
+  LogLevel warn
+  CustomLog /var/log/apache2/access-comissao.log combined
+
+  WSGIDaemonProcess comissao python-home=/var/www/voting/venv python-path=/var/www/voting:/venv/lib/python3:/venv/lib/python3/site-packages processes=10 threads=50
+  WSGIProcessGroup comissao
+  WSGIScriptAlias / /var/www/voting/wsgi.py process-group=comissao
+</VirtualHost>
+
+
+
 <code>
 #voting=sitestatic
 Alias /robots.txt /var/www/voting/sitestatic/robots.txt
@@ -263,6 +297,7 @@ config com /committee e votaEquiplano
 </code>
 
 sudo a2ensite votacao
+//Ver se precisa fazer isso
 sudo a2dissite 000-default
 sudo a2ensite 000-default
 sudo systemctl restart apache2
@@ -275,6 +310,9 @@ Manter o Celery em execução, usando quando envia arquivo de eleitores e durant
 source ./venv/bin/activate
 celery -A helios worker -l info
 
+//Esta instalando o celery 5.0
+pip uninstall django-celery
+pip uninstall celery && pip install celery
 
 Creie um arquivo votacao.conf em /etc/supervisor/conf.d/votacao.conf contendo o seguinte conteúdo
 [program:votacao_celery_worker]
@@ -285,15 +323,29 @@ autostart=true
 autorestart=true
 stdout_logfile=/var/log/votacao/celeryd.log
 redirect_stderr=true
+
+command=/var/www/helios/voting/venv/bin/python manage.py celeryd
+
+directory=/var/www/helios/voting/
+
+user=helios
+
+autostart=true
+
+autorestart=true
+
+stdout_logfile=/var/log/voting/celeryd.log
+
+redirect_stderr=true
+
+
+
 Crie o diretório /var/log/votacao
 $ sudo mkdir /var/log/votacao
 Reinicie o supervisor
 sudo systemctl enable supervisor
 $ sudo service supervisor restart
 
-
-pip uninstall django-celery
-pip uninstall celery && pip install celery
 
 celery> 5.0
 
